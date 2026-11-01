@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+/* Class based dark mode so the theme toggle can control it */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Brand — deep teal / emerald */
+  --color-brand-50: #eefdf7;
+  --color-brand-100: #d5f9ec;
+  --color-brand-200: #aef1db;
+  --color-brand-300: #77e5c4;
+  --color-brand-400: #3ecfa8;
+  --color-brand-500: #18b48f;
+  --color-brand-600: #0d9174;
+  --color-brand-700: #0d745e;
+  --color-brand-800: #0f5c4c;
+  --color-brand-900: #104c40;
+  --color-brand-950: #032c25;
+
+  /* Warm accent */
+  --color-accent-400: #fbbf4d;
+  --color-accent-500: #f59e0b;
+  --color-accent-600: #d97706;
+
+  --shadow-card: 0 1px 2px rgb(2 44 37 / 0.06), 0 8px 24px -12px rgb(2 44 37 / 0.18);
+  --shadow-float: 0 18px 40px -20px rgb(2 44 37 / 0.35);
+
+  --animate-marquee: marquee 32s linear infinite;
+  --animate-rise: rise 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  --background: #f4f6f8;
+  --foreground: #0f172a;
+}
+
+.dark {
+  --background: #060b14;
+  --foreground: #e6ebf2;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+  text-rendering: optimizeLegibility;
+}
+
+/* Thin, unobtrusive scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--foreground) 25%, transparent) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground) 22%, transparent);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track { background: transparent; }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+

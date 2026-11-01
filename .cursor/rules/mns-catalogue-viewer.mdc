@@ -1,0 +1,41 @@
+---
+description: Catalogue-Viewer product context, Vite source of truth, and Next.js migration constraints
+alwaysApply: true
+---
+
+# Catalogue-Viewer (MNS-Traders)
+
+This repo is a **mobile-first e-commerce catalogue** for MNS-Traders, being **redesigned in Next.js** (App Router). Treat it as a **Vite → Next migration**, not a greenfield product.
+
+## Source of truth
+
+- **Behavior, backend, and navigation:** `D:\MNS_Traders\CatalogueViewerMNS` (Vite + React Router).
+- **UI look:** modernize in this Next app; do not invent new business flows unless asked.
+- Read the Vite app before changing routing, auth, cart, orders, catalog filters, or admin.
+
+## Preserve these shop routes
+
+| Path | Purpose |
+|---|---|
+| `/` | Product catalogue |
+| `/cart` | Cart |
+| `/order` | Order form |
+
+## Preserve these admin routes
+
+| Path | Purpose |
+|---|---|
+| `/admin/login` | Admin login |
+| `/admin` and `/admin/dashboard` | Protected dashboard |
+| `/admin/categories` | Manage categories |
+| `/admin/products` | Manage products |
+| `/admin/orders` | Manage orders |
+
+Admin pages (except login) must stay behind auth, matching Vite `ProtectedRoute`.
+
+## Implementation notes
+
+- Keep shop and admin as separate App Router trees (`app/(shop)` vs `app/admin`).
+- Reuse existing backend: Supabase, email, and storage patterns from the Vite app.
+- Design for mobile first (filters, product detail sheets, cart, checkout).
+- Do not copy Vite logging noise or `react-router-dom`; use Next navigation APIs from current Next docs in `node_modules/next/dist/docs/`.
