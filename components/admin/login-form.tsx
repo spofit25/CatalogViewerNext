@@ -3,10 +3,12 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
+import { useLoading } from '@/context/loading-context';
 import Logo from '@/components/logo';
 
 export default function AdminLoginForm() {
   const { signInWithEmail, user, loading } = useAuth();
+  const { withLoading } = useLoading();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,7 +26,9 @@ export default function AdminLoginForm() {
     setError(null);
     setSubmitting(true);
     try {
-      await signInWithEmail(email, password);
+      await withLoading(async () => {
+        await signInWithEmail(email, password);
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed');
     } finally {

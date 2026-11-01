@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useLoading } from '@/context/loading-context';
 import type { Order } from '@/lib/types';
 
 function formatDate(dateString: string) {
@@ -28,6 +29,7 @@ function statusClass(status: string) {
 }
 
 export default function ManageOrders() {
+  const { withLoading } = useLoading();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,21 +69,25 @@ export default function ManageOrders() {
     }
   };
 
+  const refreshOrders = () => withLoading(fetchOrders);
+
   const handleStatusChange = async (orderId: number, newStatus: string) => {
     try {
-      const { error: err } = await supabase
-        .from('orders')
-        .update({
-          order_status: newStatus,
-          order_completed: newStatus === 'completed',
-          order_cancelled: newStatus === 'cancelled',
-          completed_date: newStatus === 'completed' ? new Date().toISOString() : null,
-          cancelled_date: newStatus === 'cancelled' ? new Date().toISOString() : null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('order_id', orderId);
-      if (err) throw err;
-      await fetchOrders();
+      await withLoading(async () => {
+        const { error: err } = await supabase
+          .from('orders')
+          .update({
+            order_status: newStatus,
+            order_completed: newStatus === 'completed',
+            order_cancelled: newStatus === 'cancelled',
+            completed_date: newStatus === 'completed' ? new Date().toISOString() : null,
+            cancelled_date: newStatus === 'cancelled' ? new Date().toISOString() : null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('order_id', orderId);
+        if (err) throw err;
+        await fetchOrders();
+      });
     } catch (err) {
       console.error('Error updating order status:', err);
       setError('Failed to update order status. Please try again.');
@@ -109,7 +115,7 @@ export default function ManageOrders() {
     return (
       <div className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
         <p>{error}</p>
-        <button type="button" onClick={() => void fetchOrders()} className="mt-2 font-semibold underline">
+        <button type="button" onClick={() => void refreshOrders()} className="mt-2 font-semibold underline">
           Retry
         </button>
       </div>
@@ -139,7 +145,7 @@ export default function ManageOrders() {
         </select>
         <button
           type="button"
-          onClick={() => void fetchOrders()}
+          onClick={() => void refreshOrders()}
           className="h-11 rounded-full bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700"
         >
           Refresh

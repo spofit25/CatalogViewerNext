@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCart } from '@/context/cart-context';
+import { useLoading } from '@/context/loading-context';
 import { supabase } from '@/lib/supabase';
 import { sendOrderEmail } from '@/lib/email-service';
 import Header from '@/components/header';
@@ -19,6 +20,7 @@ interface OrderFormData {
 
 export default function OrderPage() {
   const { items: cartItems, clearCart } = useCart();
+  const { withLoading } = useLoading();
   const router = useRouter();
   const [formData, setFormData] = useState<OrderFormData>({
     customerName: '',
@@ -65,54 +67,56 @@ export default function OrderPage() {
     setSubmitError(null);
 
     try {
-      const orderRef = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      await withLoading(async () => {
+        const orderRef = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-      const orderData = {
-        customer_name: formData.customerName,
-        customer_email: formData.customerEmail,
-        customer_mobile: formData.customerMobile,
-        customer_gstin: formData.customerGstin || null,
-        billing_address: formData.billingAddress || null,
-        order_type: orderType,
-        order_status: orderType === 'order' ? 'pending' : 'sent_quotation',
-        products: cartItems.map((item) => ({
-          product_id: item.id,
-          product_name: item.product.product_name,
-          price: item.selectedSize.price,
-          quantity: item.quantity,
-          size: item.selectedSize.size || null,
-        })),
-        total_amount: parseFloat(total.toFixed(2)),
-        order_ref: orderRef,
-        order_date: new Date().toISOString(),
-        order_cancelled: false,
-        order_completed: false,
-      };
-
-      const { data: order, error } = await supabase.from('orders').insert([orderData]).select().single();
-      if (error) throw new Error(error.message.includes("order_ref") ? 'Database setup required: run the orders migration.' : error.message);
-
-      await sendOrderEmail(
-        formData.customerEmail,
-        orderType === 'order' ? 'Your Order Confirmation' : 'Your Quotation Request',
-        {
-          customerName: formData.customerName,
-          customerEmail: formData.customerEmail,
-          orderRef,
-          orderType,
-          products: orderData.products.map(({ product_name, price, quantity, size }) => ({
-            product_name,
-            price,
-            quantity,
-            ...(size ? { size } : {}),
+        const orderData = {
+          customer_name: formData.customerName,
+          customer_email: formData.customerEmail,
+          customer_mobile: formData.customerMobile,
+          customer_gstin: formData.customerGstin || null,
+          billing_address: formData.billingAddress || null,
+          order_type: orderType,
+          order_status: orderType === 'order' ? 'pending' : 'sent_quotation',
+          products: cartItems.map((item) => ({
+            product_id: item.id,
+            product_name: item.product.product_name,
+            price: item.selectedSize.price,
+            quantity: item.quantity,
+            size: item.selectedSize.size || null,
           })),
-          totalAmount: orderData.total_amount,
-          orderDate: orderData.order_date,
-        }
-      );
+          total_amount: parseFloat(total.toFixed(2)),
+          order_ref: orderRef,
+          order_date: new Date().toISOString(),
+          order_cancelled: false,
+          order_completed: false,
+        };
 
-      clearCart();
-      setSubmitSuccess(true);
+        const { error } = await supabase.from('orders').insert([orderData]).select().single();
+        if (error) throw new Error(error.message.includes("order_ref") ? 'Database setup required: run the orders migration.' : error.message);
+
+        await sendOrderEmail(
+          formData.customerEmail,
+          orderType === 'order' ? 'Your Order Confirmation' : 'Your Quotation Request',
+          {
+            customerName: formData.customerName,
+            customerEmail: formData.customerEmail,
+            orderRef,
+            orderType,
+            products: orderData.products.map(({ product_name, price, quantity, size }) => ({
+              product_name,
+              price,
+              quantity,
+              ...(size ? { size } : {}),
+            })),
+            totalAmount: orderData.total_amount,
+            orderDate: orderData.order_date,
+          }
+        );
+
+        clearCart();
+        setSubmitSuccess(true);
+      });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Failed to submit order');
     } finally {

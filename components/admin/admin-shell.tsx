@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
+import { useLoading } from '@/context/loading-context';
 import Logo from '@/components/logo';
 import ThemeToggle from '@/components/theme-toggle';
 
@@ -23,6 +24,7 @@ function titleFor(pathname: string) {
 
 export default function AdminShell({ children }: { children: ReactNode }) {
   const { user, signOut } = useAuth();
+  const { withLoading } = useLoading();
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -36,7 +38,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
   const handleSignOut = async () => {
     try {
-      await signOut();
+      await withLoading(async () => {
+        await signOut();
+      });
       router.push('/');
     } catch (err) {
       console.error('Sign out failed:', err);

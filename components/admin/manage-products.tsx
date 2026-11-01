@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useLoading } from '@/context/loading-context';
 import { deleteImage, getSignedUrl, publicUrlToPath, uploadImage } from '@/lib/storage-utils';
 import type { Category, MasterProduct, SubProduct } from '@/lib/types';
 import { SIZE_ORDER } from '@/lib/types';
@@ -16,6 +17,7 @@ const btnSecondary =
 const btnSm = 'rounded-full px-3 py-1.5 text-xs font-semibold';
 
 export default function ManageProducts() {
+  const { withLoading } = useLoading();
   const [masterProducts, setMasterProducts] = useState<MasterProduct[]>([]);
   const [subProducts, setSubProducts] = useState<SubProduct[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -106,10 +108,12 @@ export default function ManageProducts() {
       return;
     }
     try {
-      const { error: err } = await supabase.from('master_products').insert([formData]);
-      if (err) throw err;
-      setFormData({ product_name: '', category_name: '' });
-      await fetchData();
+      await withLoading(async () => {
+        const { error: err } = await supabase.from('master_products').insert([formData]);
+        if (err) throw err;
+        setFormData({ product_name: '', category_name: '' });
+        await fetchData();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error adding product');
     }
@@ -128,29 +132,31 @@ export default function ManageProducts() {
     }
 
     try {
-      let imagePath = subProductForm.product_image || '';
-      if (selectedFile) {
-        const uploadedUrl = await uploadImage(selectedFile);
-        if (!uploadedUrl) throw new Error('Failed to upload image');
-        imagePath = publicUrlToPath(uploadedUrl);
-      }
+      await withLoading(async () => {
+        let imagePath = subProductForm.product_image || '';
+        if (selectedFile) {
+          const uploadedUrl = await uploadImage(selectedFile);
+          if (!uploadedUrl) throw new Error('Failed to upload image');
+          imagePath = publicUrlToPath(uploadedUrl);
+        }
 
-      const { error: err } = await supabase
-        .from('sub_products')
-        .insert([{ ...subProductForm, product_image: imagePath }]);
-      if (err) throw err;
+        const { error: err } = await supabase
+          .from('sub_products')
+          .insert([{ ...subProductForm, product_image: imagePath }]);
+        if (err) throw err;
 
-      setSubProductForm({
-        product_name: '',
-        size: '',
-        price: 0,
-        quantity_available: 0,
-        product_image: '',
-        inches: 0,
+        setSubProductForm({
+          product_name: '',
+          size: '',
+          price: 0,
+          quantity_available: 0,
+          product_image: '',
+          inches: 0,
+        });
+        setSelectedFile(null);
+        setPreviewUrl(null);
+        await fetchData();
       });
-      setSelectedFile(null);
-      setPreviewUrl(null);
-      await fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error adding variant');
     }
@@ -159,24 +165,26 @@ export default function ManageProducts() {
   const handleDeleteMasterProduct = async (id: number) => {
     if (!confirm('Delete this product and all its variants?')) return;
     try {
-      const master = masterProducts.find((p) => p.id === id);
-      const productName = master?.product_name;
-      if (productName) {
-        const variants = subProducts.filter((v) => v.product_name === productName);
-        for (const v of variants) {
-          if (v.product_image) {
-            try {
-              await deleteImage(v.product_image);
-            } catch (e) {
-              console.warn('Storage deletion error', e);
+      await withLoading(async () => {
+        const master = masterProducts.find((p) => p.id === id);
+        const productName = master?.product_name;
+        if (productName) {
+          const variants = subProducts.filter((v) => v.product_name === productName);
+          for (const v of variants) {
+            if (v.product_image) {
+              try {
+                await deleteImage(v.product_image);
+              } catch (e) {
+                console.warn('Storage deletion error', e);
+              }
             }
           }
+          await supabase.from('sub_products').delete().eq('product_name', productName);
         }
-        await supabase.from('sub_products').delete().eq('product_name', productName);
-      }
-      const { error: err } = await supabase.from('master_products').delete().eq('id', id);
-      if (err) throw err;
-      await fetchData();
+        const { error: err } = await supabase.from('master_products').delete().eq('id', id);
+        if (err) throw err;
+        await fetchData();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error deleting product');
     }
@@ -185,17 +193,19 @@ export default function ManageProducts() {
   const handleDeleteSubProduct = async (id: number) => {
     if (!confirm('Delete this variant?')) return;
     try {
-      const variant = subProducts.find((v) => v.sub_product_id === id);
-      if (variant?.product_image) {
-        try {
-          await deleteImage(variant.product_image);
-        } catch (e) {
-          console.warn('Storage deletion error', e);
+      await withLoading(async () => {
+        const variant = subProducts.find((v) => v.sub_product_id === id);
+        if (variant?.product_image) {
+          try {
+            await deleteImage(variant.product_image);
+          } catch (e) {
+            console.warn('Storage deletion error', e);
+          }
         }
-      }
-      const { error: err } = await supabase.from('sub_products').delete().eq('sub_product_id', id);
-      if (err) throw err;
-      await fetchData();
+        const { error: err } = await supabase.from('sub_products').delete().eq('sub_product_id', id);
+        if (err) throw err;
+        await fetchData();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error deleting variant');
     }
@@ -214,7 +224,7 @@ export default function ManageProducts() {
     let signedUrl: string | null = null;
     if (variant.product_image) {
       try {
-        signedUrl = await getSignedUrl(variant.product_image);
+        signedUrl = await withLoading(async () => getSignedUrl(variant.product_image));
       } catch (err) {
         console.error('Failed to get signed URL for preview:', err);
       }
@@ -243,33 +253,35 @@ export default function ManageProducts() {
   const handleUpdateVariant = async (id: number) => {
     if (!editingVariantId) return;
     try {
-      let newImagePath: string | undefined;
-      if (editSelectedFile) {
-        const uploadedUrl = await uploadImage(editSelectedFile);
-        if (!uploadedUrl) throw new Error('Failed to upload image');
-        newImagePath = publicUrlToPath(uploadedUrl);
-        const old = subProducts.find((s) => s.sub_product_id === id)?.product_image;
-        if (old) {
-          try {
-            await deleteImage(old);
-          } catch (e) {
-            console.warn('Failed to remove old object during update', e);
+      await withLoading(async () => {
+        let newImagePath: string | undefined;
+        if (editSelectedFile) {
+          const uploadedUrl = await uploadImage(editSelectedFile);
+          if (!uploadedUrl) throw new Error('Failed to upload image');
+          newImagePath = publicUrlToPath(uploadedUrl);
+          const old = subProducts.find((s) => s.sub_product_id === id)?.product_image;
+          if (old) {
+            try {
+              await deleteImage(old);
+            } catch (e) {
+              console.warn('Failed to remove old object during update', e);
+            }
           }
         }
-      }
 
-      const payload: Partial<SubProduct> = {
-        size: editForm.size,
-        price: editForm.price,
-        quantity_available: editForm.quantity_available,
-        inches: editForm.inches,
-      };
-      if (newImagePath !== undefined) payload.product_image = newImagePath;
+        const payload: Partial<SubProduct> = {
+          size: editForm.size,
+          price: editForm.price,
+          quantity_available: editForm.quantity_available,
+          inches: editForm.inches,
+        };
+        if (newImagePath !== undefined) payload.product_image = newImagePath;
 
-      const { error: err } = await supabase.from('sub_products').update(payload).eq('sub_product_id', id);
-      if (err) throw err;
-      cancelEdit();
-      await fetchData();
+        const { error: err } = await supabase.from('sub_products').update(payload).eq('sub_product_id', id);
+        if (err) throw err;
+        cancelEdit();
+        await fetchData();
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -278,16 +290,18 @@ export default function ManageProducts() {
   const handleUpdateMasterProduct = async (id: number) => {
     if (!editingMasterProductId) return;
     try {
-      const { error: err } = await supabase
-        .from('master_products')
-        .update({
-          product_name: editMasterForm.product_name,
-          category_name: editMasterForm.category_name,
-        })
-        .eq('id', id);
-      if (err) throw err;
-      cancelEdit();
-      await fetchData();
+      await withLoading(async () => {
+        const { error: err } = await supabase
+          .from('master_products')
+          .update({
+            product_name: editMasterForm.product_name,
+            category_name: editMasterForm.category_name,
+          })
+          .eq('id', id);
+        if (err) throw err;
+        cancelEdit();
+        await fetchData();
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
+import { useLoading } from '@/context/loading-context';
 
 interface ImageEditorProps {
   imageSrc: string;
@@ -11,6 +12,7 @@ interface ImageEditorProps {
 }
 
 export default function ImageEditor({ imageSrc, onSave, onCancel }: ImageEditorProps) {
+  const { withLoading } = useLoading();
   const [crop, setCrop] = useState<Crop>({
     unit: '%',
     width: 80,
@@ -72,10 +74,12 @@ export default function ImageEditor({ imageSrc, onSave, onCancel }: ImageEditorP
     if (!imageRef || !completedCrop) return;
     setIsProcessing(true);
     try {
-      const croppedBlob = await getCroppedImg(imageRef, completedCrop);
-      if (croppedBlob) {
-        onSave(new File([croppedBlob], `cropped-${Date.now()}.jpg`, { type: 'image/jpeg' }));
-      }
+      await withLoading(async () => {
+        const croppedBlob = await getCroppedImg(imageRef, completedCrop);
+        if (croppedBlob) {
+          onSave(new File([croppedBlob], `cropped-${Date.now()}.jpg`, { type: 'image/jpeg' }));
+        }
+      });
     } catch (error) {
       console.error('Error cropping image:', error);
     } finally {

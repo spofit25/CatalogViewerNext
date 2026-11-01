@@ -19,6 +19,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { supabase } from '@/lib/supabase';
+import { useLoading } from '@/context/loading-context';
 import type { Category, ScrollingText } from '@/lib/types';
 
 const inputClass =
@@ -79,6 +80,7 @@ function SortableCategoryRow({
 }
 
 export default function ManageCategories() {
+  const { withLoading } = useLoading();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -117,16 +119,18 @@ export default function ManageCategories() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      if (editingId) {
-        const { error: err } = await supabase.from('categories').update(formData).eq('id', editingId);
-        if (err) throw err;
-        setEditingId(null);
-      } else {
-        const { error: err } = await supabase.from('categories').insert([formData]);
-        if (err) throw err;
-      }
-      setFormData({ category_name: '', category_description: '' });
-      await fetchCategories();
+      await withLoading(async () => {
+        if (editingId) {
+          const { error: err } = await supabase.from('categories').update(formData).eq('id', editingId);
+          if (err) throw err;
+          setEditingId(null);
+        } else {
+          const { error: err } = await supabase.from('categories').insert([formData]);
+          if (err) throw err;
+        }
+        setFormData({ category_name: '', category_description: '' });
+        await fetchCategories();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error saving category');
     }
@@ -135,9 +139,11 @@ export default function ManageCategories() {
   const handleDelete = async (id: number) => {
     if (!confirm('Are you sure you want to delete this category?')) return;
     try {
-      const { error: err } = await supabase.from('categories').delete().eq('id', id);
-      if (err) throw err;
-      await fetchCategories();
+      await withLoading(async () => {
+        const { error: err } = await supabase.from('categories').delete().eq('id', id);
+        if (err) throw err;
+        await fetchCategories();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error deleting category');
     }
@@ -161,10 +167,12 @@ export default function ManageCategories() {
     setCategories(reordered);
 
     try {
-      for (const [index, cat] of reordered.entries()) {
-        const { error: err } = await supabase.from('categories').update({ order: index + 1 }).eq('id', cat.id);
-        if (err) throw err;
-      }
+      await withLoading(async () => {
+        for (const [index, cat] of reordered.entries()) {
+          const { error: err } = await supabase.from('categories').update({ order: index + 1 }).eq('id', cat.id);
+          if (err) throw err;
+        }
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update category order');
       await fetchCategories();
@@ -187,19 +195,21 @@ export default function ManageCategories() {
   const handleScrollingTextSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      if (editingScrollingTextId) {
-        const { error: err } = await supabase
-          .from('scrolling_text')
-          .update(scrollingTextForm)
-          .eq('id', editingScrollingTextId);
-        if (err) throw err;
-        setEditingScrollingTextId(null);
-      } else {
-        const { error: err } = await supabase.from('scrolling_text').insert([scrollingTextForm]);
-        if (err) throw err;
-      }
-      setScrollingTextForm({ text_content: '' });
-      await fetchScrollingTexts();
+      await withLoading(async () => {
+        if (editingScrollingTextId) {
+          const { error: err } = await supabase
+            .from('scrolling_text')
+            .update(scrollingTextForm)
+            .eq('id', editingScrollingTextId);
+          if (err) throw err;
+          setEditingScrollingTextId(null);
+        } else {
+          const { error: err } = await supabase.from('scrolling_text').insert([scrollingTextForm]);
+          if (err) throw err;
+        }
+        setScrollingTextForm({ text_content: '' });
+        await fetchScrollingTexts();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error saving scrolling text');
     }
@@ -208,9 +218,11 @@ export default function ManageCategories() {
   const handleScrollingTextDelete = async (id: number) => {
     if (!confirm('Are you sure you want to delete this scrolling text?')) return;
     try {
-      const { error: err } = await supabase.from('scrolling_text').delete().eq('id', id);
-      if (err) throw err;
-      await fetchScrollingTexts();
+      await withLoading(async () => {
+        const { error: err } = await supabase.from('scrolling_text').delete().eq('id', id);
+        if (err) throw err;
+        await fetchScrollingTexts();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error deleting scrolling text');
     }
