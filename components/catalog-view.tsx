@@ -10,6 +10,7 @@ import ProductDetailSheet from './product-detail-sheet';
 import FilterSheet from './filter-sheet';
 import Pagination from './pagination';
 import Footer from './footer';
+import { Analytics } from '@vercel/analytics/next';
 
 export default function CatalogView() {
   const catalog = useCatalog();
@@ -24,6 +25,7 @@ export default function CatalogView() {
 
   return (
     <div className="flex min-h-dvh flex-col">
+      <Analytics />
       <Header
         searchQuery={catalog.searchQuery}
         onSearchChange={catalog.onSearchChange}
