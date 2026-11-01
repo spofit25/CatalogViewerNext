@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useLoading } from '@/context/loading-context';
 import { deleteImage, getSignedUrl, publicUrlToPath, uploadImage } from '@/lib/storage-utils';
 import type { Category, MasterProduct, SubProduct } from '@/lib/types';
 import { SIZE_ORDER } from '@/lib/types';
+import ImageDisplay from '@/components/image-display';
 import ImageEditor from './image-editor';
 
 const inputClass =
@@ -13,8 +14,18 @@ const inputClass =
 const btnPrimary =
   'h-10 rounded-full bg-brand-600 px-4 text-sm font-semibold text-white transition hover:bg-brand-700';
 const btnSecondary =
-  'h-10 rounded-full border border-black/10 px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:text-slate-300';
+  'h-10 rounded-full border border-black/10 px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5';
 const btnSm = 'rounded-full px-3 py-1.5 text-xs font-semibold';
+
+type ModalKind = 'add-master' | 'edit-master' | 'add-variant' | 'edit-variant' | null;
+
+const emptyVariantForm = {
+  size: '',
+  price: 0,
+  quantity_available: 0,
+  product_image: '',
+  inches: 0,
+};
 
 export default function ManageProducts() {
   const { withLoading } = useLoading();
@@ -23,26 +34,27 @@ export default function ManageProducts() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [formData, setFormData] = useState({ product_name: '', category_name: '' });
-  const [subProductForm, setSubProductForm] = useState({
-    product_name: '',
-    size: '',
-    price: 0,
-    quantity_available: 0,
-    product_image: '',
-    inches: 0,
-  });
+
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+
+  const [masterSearch, setMasterSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [variantsSearch, setVariantsSearch] = useState('');
+
+  const [modal, setModal] = useState<ModalKind>(null);
+  const [masterForm, setMasterForm] = useState({ product_name: '', category_name: '' });
+  const [editingMasterId, setEditingMasterId] = useState<number | null>(null);
+
+  const [variantForm, setVariantForm] = useState(emptyVariantForm);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
   const [editingVariantId, setEditingVariantId] = useState<number | null>(null);
-  const [editingMasterProductId, setEditingMasterProductId] = useState<number | null>(null);
-  const [showEditModal, setShowEditModal] = useState(false);
   const [editForm, setEditForm] = useState({ size: '', price: 0, quantity_available: 0, inches: 0 });
-  const [editMasterForm, setEditMasterForm] = useState({ product_name: '', category_name: '' });
   const [editSelectedFile, setEditSelectedFile] = useState<File | null>(null);
   const [editPreviewUrl, setEditPreviewUrl] = useState<string | null>(null);
-  const [masterProductsSearch, setMasterProductsSearch] = useState('');
-  const [variantsSearch, setVariantsSearch] = useState('');
+
   const [showImageEditor, setShowImageEditor] = useState(false);
   const [imageEditorSrc, setImageEditorSrc] = useState('');
   const [isEditMode, setIsEditMode] = useState(false);
@@ -56,6 +68,61 @@ export default function ManageProducts() {
     const timer = setTimeout(() => setError(null), 5000);
     return () => clearTimeout(timer);
   }, [error]);
+
+  const variantCountByName = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const v of subProducts) {
+      counts.set(v.product_name, (counts.get(v.product_name) || 0) + 1);
+    }
+    return counts;
+  }, [subProducts]);
+
+  const filteredMasterProducts = useMemo(() => {
+    const q = masterSearch.toLowerCase().trim();
+    return masterProducts.filter((product) => {
+      const matchesCategory = categoryFilter === 'all' || product.category_name === categoryFilter;
+      const matchesSearch =
+        !q ||
+        product.product_name.toLowerCase().includes(q) ||
+        product.category_name.toLowerCase().includes(q);
+      return matchesCategory && matchesSearch;
+    });
+  }, [masterProducts, masterSearch, categoryFilter]);
+
+  const selectedProduct =
+    masterProducts.find((p) => p.id === selectedProductId) ??
+    filteredMasterProducts[0] ??
+    masterProducts[0] ??
+    null;
+
+  useEffect(() => {
+    if (!selectedProductId && masterProducts.length > 0) {
+      setSelectedProductId(masterProducts[0].id);
+    } else if (
+      selectedProductId &&
+      masterProducts.length > 0 &&
+      !masterProducts.some((p) => p.id === selectedProductId)
+    ) {
+      setSelectedProductId(masterProducts[0].id);
+    } else if (masterProducts.length === 0) {
+      setSelectedProductId(null);
+    }
+  }, [masterProducts, selectedProductId]);
+
+  const selectedVariants = useMemo(() => {
+    if (!selectedProduct) return [];
+    const q = variantsSearch.toLowerCase().trim();
+    return subProducts.filter((variant) => {
+      if (variant.product_name !== selectedProduct.product_name) return false;
+      if (!q) return true;
+      return (
+        variant.size.toLowerCase().includes(q) ||
+        variant.price.toString().includes(q) ||
+        (variant.quantity_available || 0).toString().includes(q) ||
+        (variant.inches || 0).toString().includes(q)
+      );
+    });
+  }, [subProducts, selectedProduct, variantsSearch]);
 
   const openImageEditor = (imageSrc: string, editMode = false) => {
     setImageEditorSrc(imageSrc);
@@ -101,118 +168,40 @@ export default function ManageProducts() {
     }
   };
 
-  const handleAddProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.product_name || !formData.category_name) {
-      setError('Please fill in all fields');
-      return;
-    }
-    try {
-      await withLoading(async () => {
-        const { error: err } = await supabase.from('master_products').insert([formData]);
-        if (err) throw err;
-        setFormData({ product_name: '', category_name: '' });
-        await fetchData();
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error adding product');
-    }
+  const closeModal = () => {
+    setModal(null);
+    setEditingMasterId(null);
+    setEditingVariantId(null);
+    setMasterForm({ product_name: '', category_name: '' });
+    setVariantForm(emptyVariantForm);
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setEditForm({ size: '', price: 0, quantity_available: 0, inches: 0 });
+    setEditSelectedFile(null);
+    setEditPreviewUrl(null);
   };
 
-  const handleAddSubProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (
-      !subProductForm.product_name ||
-      !subProductForm.size ||
-      subProductForm.price <= 0 ||
-      subProductForm.quantity_available < 0
-    ) {
-      setError('Please fill in all fields with valid values');
-      return;
-    }
-
-    try {
-      await withLoading(async () => {
-        let imagePath = subProductForm.product_image || '';
-        if (selectedFile) {
-          const uploadedUrl = await uploadImage(selectedFile);
-          if (!uploadedUrl) throw new Error('Failed to upload image');
-          imagePath = publicUrlToPath(uploadedUrl);
-        }
-
-        const { error: err } = await supabase
-          .from('sub_products')
-          .insert([{ ...subProductForm, product_image: imagePath }]);
-        if (err) throw err;
-
-        setSubProductForm({
-          product_name: '',
-          size: '',
-          price: 0,
-          quantity_available: 0,
-          product_image: '',
-          inches: 0,
-        });
-        setSelectedFile(null);
-        setPreviewUrl(null);
-        await fetchData();
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error adding variant');
-    }
+  const openAddMaster = () => {
+    setMasterForm({ product_name: '', category_name: '' });
+    setEditingMasterId(null);
+    setModal('add-master');
   };
 
-  const handleDeleteMasterProduct = async (id: number) => {
-    if (!confirm('Delete this product and all its variants?')) return;
-    try {
-      await withLoading(async () => {
-        const master = masterProducts.find((p) => p.id === id);
-        const productName = master?.product_name;
-        if (productName) {
-          const variants = subProducts.filter((v) => v.product_name === productName);
-          for (const v of variants) {
-            if (v.product_image) {
-              try {
-                await deleteImage(v.product_image);
-              } catch (e) {
-                console.warn('Storage deletion error', e);
-              }
-            }
-          }
-          await supabase.from('sub_products').delete().eq('product_name', productName);
-        }
-        const { error: err } = await supabase.from('master_products').delete().eq('id', id);
-        if (err) throw err;
-        await fetchData();
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error deleting product');
-    }
+  const openEditMaster = (product: MasterProduct) => {
+    setEditingMasterId(product.id);
+    setMasterForm({ product_name: product.product_name, category_name: product.category_name });
+    setModal('edit-master');
   };
 
-  const handleDeleteSubProduct = async (id: number) => {
-    if (!confirm('Delete this variant?')) return;
-    try {
-      await withLoading(async () => {
-        const variant = subProducts.find((v) => v.sub_product_id === id);
-        if (variant?.product_image) {
-          try {
-            await deleteImage(variant.product_image);
-          } catch (e) {
-            console.warn('Storage deletion error', e);
-          }
-        }
-        const { error: err } = await supabase.from('sub_products').delete().eq('sub_product_id', id);
-        if (err) throw err;
-        await fetchData();
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error deleting variant');
-    }
+  const openAddVariant = () => {
+    if (!selectedProduct) return;
+    setVariantForm(emptyVariantForm);
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setModal('add-variant');
   };
 
-  const startEditVariant = async (variant: SubProduct) => {
-    setEditingMasterProductId(null);
+  const openEditVariant = async (variant: SubProduct) => {
     setEditingVariantId(variant.sub_product_id);
     setEditForm({
       size: variant.size,
@@ -230,27 +219,84 @@ export default function ManageProducts() {
       }
     }
     setEditPreviewUrl(signedUrl);
-    setShowEditModal(true);
+    setModal('edit-variant');
   };
 
-  const startEditMasterProduct = (product: MasterProduct) => {
-    setEditingVariantId(null);
-    setEditingMasterProductId(product.id);
-    setEditMasterForm({ product_name: product.product_name, category_name: product.category_name });
-    setShowEditModal(true);
+  const selectProduct = (product: MasterProduct) => {
+    setSelectedProductId(product.id);
+    setVariantsSearch('');
+    setMobileDetailOpen(true);
   };
 
-  const cancelEdit = () => {
-    setEditingVariantId(null);
-    setEditingMasterProductId(null);
-    setEditForm({ size: '', price: 0, quantity_available: 0, inches: 0 });
-    setEditMasterForm({ product_name: '', category_name: '' });
-    setEditSelectedFile(null);
-    setEditPreviewUrl(null);
-    setShowEditModal(false);
+  const handleSaveMaster = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!masterForm.product_name || !masterForm.category_name) {
+      setError('Please fill in all fields');
+      return;
+    }
+    try {
+      await withLoading(async () => {
+        if (modal === 'edit-master' && editingMasterId) {
+          const { error: err } = await supabase
+            .from('master_products')
+            .update({
+              product_name: masterForm.product_name,
+              category_name: masterForm.category_name,
+            })
+            .eq('id', editingMasterId);
+          if (err) throw err;
+        } else {
+          const { data, error: err } = await supabase
+            .from('master_products')
+            .insert([masterForm])
+            .select()
+            .single();
+          if (err) throw err;
+          if (data?.id) setSelectedProductId(data.id);
+        }
+        closeModal();
+        await fetchData();
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error saving product');
+    }
   };
 
-  const handleUpdateVariant = async (id: number) => {
+  const handleAddVariant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProduct) return;
+    if (!variantForm.size || variantForm.price <= 0 || variantForm.quantity_available < 0) {
+      setError('Please fill in all fields with valid values');
+      return;
+    }
+
+    try {
+      await withLoading(async () => {
+        let imagePath = variantForm.product_image || '';
+        if (selectedFile) {
+          const uploadedUrl = await uploadImage(selectedFile);
+          if (!uploadedUrl) throw new Error('Failed to upload image');
+          imagePath = publicUrlToPath(uploadedUrl);
+        }
+
+        const { error: err } = await supabase.from('sub_products').insert([
+          {
+            ...variantForm,
+            product_name: selectedProduct.product_name,
+            product_image: imagePath,
+          },
+        ]);
+        if (err) throw err;
+        closeModal();
+        await fetchData();
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error adding variant');
+    }
+  };
+
+  const handleUpdateVariant = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!editingVariantId) return;
     try {
       await withLoading(async () => {
@@ -259,12 +305,12 @@ export default function ManageProducts() {
           const uploadedUrl = await uploadImage(editSelectedFile);
           if (!uploadedUrl) throw new Error('Failed to upload image');
           newImagePath = publicUrlToPath(uploadedUrl);
-          const old = subProducts.find((s) => s.sub_product_id === id)?.product_image;
+          const old = subProducts.find((s) => s.sub_product_id === editingVariantId)?.product_image;
           if (old) {
             try {
               await deleteImage(old);
-            } catch (e) {
-              console.warn('Failed to remove old object during update', e);
+            } catch (err) {
+              console.warn('Failed to remove old object during update', err);
             }
           }
         }
@@ -277,122 +323,425 @@ export default function ManageProducts() {
         };
         if (newImagePath !== undefined) payload.product_image = newImagePath;
 
-        const { error: err } = await supabase.from('sub_products').update(payload).eq('sub_product_id', id);
+        const { error: err } = await supabase
+          .from('sub_products')
+          .update(payload)
+          .eq('sub_product_id', editingVariantId);
         if (err) throw err;
-        cancelEdit();
+        closeModal();
         await fetchData();
       });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
-  const handleUpdateMasterProduct = async (id: number) => {
-    if (!editingMasterProductId) return;
+  const handleDeleteMasterProduct = async (id: number) => {
+    if (!confirm('Delete this product and all its variants?')) return;
     try {
       await withLoading(async () => {
-        const { error: err } = await supabase
-          .from('master_products')
-          .update({
-            product_name: editMasterForm.product_name,
-            category_name: editMasterForm.category_name,
-          })
-          .eq('id', id);
+        const master = masterProducts.find((p) => p.id === id);
+        const productName = master?.product_name;
+        if (productName) {
+          const variants = subProducts.filter((v) => v.product_name === productName);
+          for (const v of variants) {
+            if (v.product_image) {
+              try {
+                await deleteImage(v.product_image);
+              } catch (err) {
+                console.warn('Storage deletion error', err);
+              }
+            }
+          }
+          await supabase.from('sub_products').delete().eq('product_name', productName);
+        }
+        const { error: err } = await supabase.from('master_products').delete().eq('id', id);
         if (err) throw err;
-        cancelEdit();
+        if (selectedProductId === id) {
+          setMobileDetailOpen(false);
+        }
         await fetchData();
       });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error deleting product');
     }
   };
 
-  const editingVariant = subProducts.find((v) => v.sub_product_id === editingVariantId);
-  const editingMasterProduct = masterProducts.find((p) => p.id === editingMasterProductId);
-  const filteredMasterProducts = masterProducts.filter(
-    (product) =>
-      product.product_name.toLowerCase().includes(masterProductsSearch.toLowerCase()) ||
-      product.category_name.toLowerCase().includes(masterProductsSearch.toLowerCase()),
-  );
-  const filteredSubProducts = subProducts.filter(
-    (variant) =>
-      variant.product_name.toLowerCase().includes(variantsSearch.toLowerCase()) ||
-      variant.size.toLowerCase().includes(variantsSearch.toLowerCase()) ||
-      variant.price.toString().includes(variantsSearch) ||
-      (variant.quantity_available || 0).toString().includes(variantsSearch),
-  );
+  const handleDeleteSubProduct = async (id: number) => {
+    if (!confirm('Delete this variant?')) return;
+    try {
+      await withLoading(async () => {
+        const variant = subProducts.find((v) => v.sub_product_id === id);
+        if (variant?.product_image) {
+          try {
+            await deleteImage(variant.product_image);
+          } catch (err) {
+            console.warn('Storage deletion error', err);
+          }
+        }
+        const { error: err } = await supabase.from('sub_products').delete().eq('sub_product_id', id);
+        if (err) throw err;
+        await fetchData();
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error deleting variant');
+    }
+  };
 
   if (loading) return <p className="text-sm text-slate-500">Loading products…</p>;
 
+  const masterList = (
+    <section className="flex h-full min-h-0 flex-col rounded-3xl border border-black/5 bg-white shadow-card dark:border-white/10 dark:bg-slate-900/70">
+      <div className="border-b border-black/5 p-4 dark:border-white/10">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg font-extrabold">Products</h2>
+          <button type="button" className={btnPrimary} onClick={openAddMaster}>
+            Add product
+          </button>
+        </div>
+        <div className="mt-3 space-y-2">
+          <input
+            type="text"
+            placeholder="Search by name or category…"
+            value={masterSearch}
+            onChange={(e) => setMasterSearch(e.target.value)}
+            className={inputClass}
+          />
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className={inputClass}
+          >
+            <option value="all">All categories</option>
+            {categories.map((cat) => (
+              <option key={cat.id} value={cat.category_name}>
+                {cat.category_name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {filteredMasterProducts.length === 0 ? (
+          <p className="px-3 py-8 text-center text-sm text-slate-500">
+            {masterSearch || categoryFilter !== 'all'
+              ? 'No products match your filters.'
+              : 'No products yet. Add your first product.'}
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {filteredMasterProducts.map((product) => {
+              const count = variantCountByName.get(product.product_name) || 0;
+              const selected = selectedProduct?.id === product.id;
+              return (
+                <li key={product.id}>
+                  <button
+                    type="button"
+                    onClick={() => selectProduct(product)}
+                    className={`w-full rounded-2xl px-3 py-3 text-left transition ${
+                      selected
+                        ? 'bg-brand-50 ring-1 ring-brand-500/30 dark:bg-brand-500/10'
+                        : 'hover:bg-slate-50 dark:hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-slate-900 dark:text-white">
+                          {product.product_name}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-slate-500">{product.category_name}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-white/10 dark:text-slate-300">
+                        {count} {count === 1 ? 'variant' : 'variants'}
+                      </span>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+
+  const detailPanel = (
+    <section className="flex h-full min-h-0 flex-col rounded-3xl border border-black/5 bg-white shadow-card dark:border-white/10 dark:bg-slate-900/70">
+      {!selectedProduct ? (
+        <div className="grid flex-1 place-items-center p-8 text-center">
+          <div>
+            <p className="text-base font-semibold text-slate-700 dark:text-slate-200">
+              Select a product to manage variants
+            </p>
+            <p className="mt-1 text-sm text-slate-500">
+              Choose a master product from the list, then add or edit its sizes.
+            </p>
+            <button type="button" className={`${btnPrimary} mt-4`} onClick={openAddMaster}>
+              Add product
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="border-b border-black/5 p-4 dark:border-white/10">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <button
+                  type="button"
+                  className="mb-2 inline-flex items-center gap-1 text-sm font-medium text-slate-500 lg:hidden"
+                  onClick={() => setMobileDetailOpen(false)}
+                >
+                  ← Back to products
+                </button>
+                <h2 className="truncate text-lg font-extrabold text-slate-900 dark:text-white">
+                  {selectedProduct.product_name}
+                </h2>
+                <p className="mt-0.5 text-sm text-slate-500">{selectedProduct.category_name}</p>
+              </div>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  className={`${btnSm} bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300`}
+                  onClick={() => openEditMaster(selectedProduct)}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className={`${btnSm} bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300`}
+                  onClick={() => void handleDeleteMasterProduct(selectedProduct.id)}
+                >
+                  Delete
+                </button>
+                <button type="button" className={btnPrimary} onClick={openAddVariant}>
+                  Add variant
+                </button>
+              </div>
+            </div>
+            <input
+              type="text"
+              placeholder="Search variants by size, price, or quantity…"
+              value={variantsSearch}
+              onChange={(e) => setVariantsSearch(e.target.value)}
+              className={`${inputClass} mt-3`}
+            />
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {selectedVariants.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-black/10 px-4 py-12 text-center dark:border-white/10">
+                <p className="text-sm text-slate-500">
+                  {variantsSearch
+                    ? 'No variants match your search.'
+                    : 'No variants for this product yet.'}
+                </p>
+                {!variantsSearch && (
+                  <button type="button" className={`${btnPrimary} mt-4`} onClick={openAddVariant}>
+                    Add first variant
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-xs uppercase tracking-wide text-slate-400">
+                      <th className="px-3 py-2">Image</th>
+                      <th className="px-3 py-2">Size</th>
+                      <th className="px-3 py-2">Inches</th>
+                      <th className="px-3 py-2">Price</th>
+                      <th className="px-3 py-2">Qty</th>
+                      <th className="px-3 py-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedVariants.map((variant) => (
+                      <tr
+                        key={variant.sub_product_id}
+                        className="border-t border-black/5 dark:border-white/10"
+                      >
+                        <td className="px-3 py-3">
+                          <div className="h-12 w-12 overflow-hidden rounded-lg bg-slate-100 dark:bg-white/5">
+                            <ImageDisplay
+                              imagePath={variant.product_image}
+                              alt={variant.product_name}
+                              className="h-full w-full object-contain"
+                            />
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 font-medium">{variant.size}</td>
+                        <td className="px-3 py-3">{variant.inches ? `${variant.inches}"` : '—'}</td>
+                        <td className="px-3 py-3">₹{variant.price.toFixed(2)}</td>
+                        <td className="px-3 py-3">{variant.quantity_available}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className={`${btnSm} bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300`}
+                              onClick={() => void openEditVariant(variant)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className={`${btnSm} bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300`}
+                              onClick={() => void handleDeleteSubProduct(variant.sub_product_id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+
   return (
     <>
-      <div className="space-y-6">
+      <div className="space-y-4">
         {error && (
           <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">
             {error}
           </div>
         )}
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <section className="rounded-3xl border border-black/5 bg-white p-5 shadow-card dark:border-white/10 dark:bg-slate-900/70">
-            <h2 className="text-lg font-extrabold">Add master product</h2>
-            <form onSubmit={handleAddProduct} className="mt-4 space-y-3">
-              <input
-                type="text"
-                placeholder="Product name"
-                value={formData.product_name}
-                onChange={(e) => setFormData({ ...formData, product_name: e.target.value })}
-                required
-                className={inputClass}
-              />
-              <select
-                value={formData.category_name}
-                onChange={(e) => setFormData({ ...formData, category_name: e.target.value })}
-                required
-                className={inputClass}
-              >
-                <option value="">Select category</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.category_name}>
-                    {cat.category_name}
-                  </option>
-                ))}
-              </select>
-              <button type="submit" className={btnPrimary}>Add product</button>
-            </form>
-          </section>
+        {/* Desktop: side-by-side master-detail */}
+        <div className="hidden h-[calc(100dvh-10rem)] min-h-[32rem] gap-4 lg:grid lg:grid-cols-[minmax(280px,36%)_1fr]">
+          {masterList}
+          {detailPanel}
+        </div>
 
-          <section className="rounded-3xl border border-black/5 bg-white p-5 shadow-card dark:border-white/10 dark:bg-slate-900/70">
-            <h2 className="text-lg font-extrabold">Add product variant</h2>
-            <form onSubmit={handleAddSubProduct} className="mt-4 space-y-3">
-              <input
-                type="text"
-                placeholder="Product name (must exist)"
-                value={subProductForm.product_name}
-                onChange={(e) => setSubProductForm({ ...subProductForm, product_name: e.target.value })}
-                list="product-names"
-                required
-                className={inputClass}
-              />
-              <datalist id="product-names">
-                {masterProducts.map((p) => (
-                  <option key={p.id} value={p.product_name} />
-                ))}
-              </datalist>
-              <select
-                value={subProductForm.size}
-                onChange={(e) => setSubProductForm({ ...subProductForm, size: e.target.value })}
-                required
-                className={inputClass}
-              >
-                <option value="">Select size</option>
-                {SIZE_ORDER.map((size) => (
-                  <option key={size} value={size}>{size}</option>
-                ))}
-              </select>
-              <input type="number" step="0.01" placeholder="Inches" value={subProductForm.inches} onChange={(e) => setSubProductForm({ ...subProductForm, inches: parseFloat(e.target.value) })} className={inputClass} />
-              <input type="number" step="0.01" placeholder="Price" value={subProductForm.price} onChange={(e) => setSubProductForm({ ...subProductForm, price: parseFloat(e.target.value) })} className={inputClass} />
-              <input type="number" placeholder="Quantity available" value={subProductForm.quantity_available} onChange={(e) => setSubProductForm({ ...subProductForm, quantity_available: parseFloat(e.target.value) })} className={inputClass} />
+        {/* Mobile: list, then full-panel detail */}
+        <div className="lg:hidden">
+          <div className="min-h-[28rem]">{masterList}</div>
+          {mobileDetailOpen && selectedProduct && (
+            <div className="fixed inset-0 z-40 bg-[var(--background)] pt-[env(safe-area-inset-top)]">
+              <div className="flex h-full flex-col p-3">{detailPanel}</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {(modal === 'add-master' || modal === 'edit-master') && (
+        <div className="fixed inset-0 z-50 grid place-items-end bg-black/40 p-0 sm:place-items-center sm:p-4">
+          <div className="w-full max-w-lg rounded-t-3xl bg-white p-5 dark:bg-slate-900 sm:rounded-3xl">
+            <h3 className="text-lg font-extrabold">
+              {modal === 'edit-master' ? 'Edit product' : 'Add product'}
+            </h3>
+            <form onSubmit={handleSaveMaster} className="mt-4 space-y-3">
+              <label className="block text-sm">
+                Product name
+                <input
+                  className={`${inputClass} mt-1`}
+                  type="text"
+                  value={masterForm.product_name}
+                  onChange={(e) => setMasterForm({ ...masterForm, product_name: e.target.value })}
+                  required
+                />
+              </label>
+              <label className="block text-sm">
+                Category
+                <select
+                  className={`${inputClass} mt-1`}
+                  value={masterForm.category_name}
+                  onChange={(e) => setMasterForm({ ...masterForm, category_name: e.target.value })}
+                  required
+                >
+                  <option value="">Select category</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.category_name}>
+                      {cat.category_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" className={btnSecondary} onClick={closeModal}>
+                  Cancel
+                </button>
+                <button type="submit" className={btnPrimary}>
+                  Save
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {modal === 'add-variant' && selectedProduct && (
+        <div className="fixed inset-0 z-50 grid place-items-end bg-black/40 p-0 sm:place-items-center sm:p-4">
+          <div className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-5 dark:bg-slate-900 sm:rounded-3xl">
+            <h3 className="text-lg font-extrabold">Add variant</h3>
+            <p className="mt-2 inline-flex rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-800 dark:bg-brand-500/15 dark:text-brand-300">
+              {selectedProduct.product_name}
+            </p>
+            <form onSubmit={handleAddVariant} className="mt-4 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm">
+                  Size
+                  <select
+                    className={`${inputClass} mt-1`}
+                    value={variantForm.size}
+                    onChange={(e) => setVariantForm({ ...variantForm, size: e.target.value })}
+                    required
+                  >
+                    <option value="">Select size</option>
+                    {SIZE_ORDER.map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  Inches
+                  <input
+                    className={`${inputClass} mt-1`}
+                    type="number"
+                    step="0.01"
+                    value={variantForm.inches}
+                    onChange={(e) =>
+                      setVariantForm({ ...variantForm, inches: parseFloat(e.target.value) || 0 })
+                    }
+                  />
+                </label>
+                <label className="block text-sm">
+                  Price
+                  <input
+                    className={`${inputClass} mt-1`}
+                    type="number"
+                    step="0.01"
+                    value={variantForm.price}
+                    onChange={(e) =>
+                      setVariantForm({ ...variantForm, price: parseFloat(e.target.value) || 0 })
+                    }
+                    required
+                  />
+                </label>
+                <label className="block text-sm">
+                  Quantity available
+                  <input
+                    className={`${inputClass} mt-1`}
+                    type="number"
+                    value={variantForm.quantity_available}
+                    onChange={(e) =>
+                      setVariantForm({
+                        ...variantForm,
+                        quantity_available: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    required
+                  />
+                </label>
+              </div>
               <label className="block text-sm font-medium">
                 Product image
                 <input
@@ -401,9 +750,8 @@ export default function ManageProducts() {
                   className="mt-2 block w-full text-sm"
                   onChange={(e) => {
                     const file = e.target.files?.[0] || null;
-                    if (file) {
-                      openImageEditor(URL.createObjectURL(file), false);
-                    } else {
+                    if (file) openImageEditor(URL.createObjectURL(file), false);
+                    else {
                       setSelectedFile(null);
                       setPreviewUrl(null);
                     }
@@ -414,171 +762,113 @@ export default function ManageProducts() {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={previewUrl} alt="Selected" className="mx-auto max-h-36 rounded-xl" />
               )}
-              <button type="submit" className={btnPrimary}>Add variant</button>
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" className={btnSecondary} onClick={closeModal}>
+                  Cancel
+                </button>
+                <button type="submit" className={btnPrimary}>
+                  Add variant
+                </button>
+              </div>
             </form>
-          </section>
+          </div>
         </div>
+      )}
 
-        <section className="rounded-3xl border border-black/5 bg-white p-5 shadow-card dark:border-white/10 dark:bg-slate-900/70">
-          <h2 className="text-lg font-extrabold">Master products</h2>
-          <input
-            type="text"
-            placeholder="Search master products by name or category…"
-            value={masterProductsSearch}
-            onChange={(e) => setMasterProductsSearch(e.target.value)}
-            className={`${inputClass} mt-3`}
-          />
-          {filteredMasterProducts.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">
-              {masterProductsSearch ? 'No products match your search.' : 'No products found.'}
-            </p>
-          ) : (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead>
-                  <tr className="text-xs uppercase tracking-wide text-slate-400">
-                    <th className="px-3 py-2">Name</th>
-                    <th className="px-3 py-2">Category</th>
-                    <th className="px-3 py-2">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredMasterProducts.map((product) => (
-                    <tr key={product.id} className="border-t border-black/5 dark:border-white/10">
-                      <td className="px-3 py-3">{product.product_name}</td>
-                      <td className="px-3 py-3 text-slate-500">{product.category_name}</td>
-                      <td className="px-3 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <button type="button" className={`${btnSm} bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300`} onClick={() => startEditMasterProduct(product)}>Edit</button>
-                          <button type="button" className={`${btnSm} bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300`} onClick={() => void handleDeleteMasterProduct(product.id)}>Delete</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-3xl border border-black/5 bg-white p-5 shadow-card dark:border-white/10 dark:bg-slate-900/70">
-          <h2 className="text-lg font-extrabold">Product variants</h2>
-          <input
-            type="text"
-            placeholder="Search variants by product name, size, price, or quantity…"
-            value={variantsSearch}
-            onChange={(e) => setVariantsSearch(e.target.value)}
-            className={`${inputClass} mt-3`}
-          />
-          {filteredSubProducts.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">
-              {variantsSearch ? 'No variants match your search.' : 'No variants found.'}
-            </p>
-          ) : (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead>
-                  <tr className="text-xs uppercase tracking-wide text-slate-400">
-                    <th className="px-3 py-2">Product</th>
-                    <th className="px-3 py-2">Size</th>
-                    <th className="px-3 py-2">Inches</th>
-                    <th className="px-3 py-2">Price</th>
-                    <th className="px-3 py-2">Qty</th>
-                    <th className="px-3 py-2">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredSubProducts.map((variant) => (
-                    <tr key={variant.sub_product_id} className="border-t border-black/5 dark:border-white/10">
-                      <td className="px-3 py-3">{variant.product_name}</td>
-                      <td className="px-3 py-3">{variant.size}</td>
-                      <td className="px-3 py-3">{variant.inches ? `${variant.inches}"` : '—'}</td>
-                      <td className="px-3 py-3">₹{variant.price.toFixed(2)}</td>
-                      <td className="px-3 py-3">{variant.quantity_available}</td>
-                      <td className="px-3 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <button type="button" className={`${btnSm} bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300`} onClick={() => void startEditVariant(variant)}>Edit</button>
-                          <button type="button" className={`${btnSm} bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300`} onClick={() => void handleDeleteSubProduct(variant.sub_product_id)}>Delete</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
-
-      {showEditModal && (editingVariant || editingMasterProduct) && (
+      {modal === 'edit-variant' && editingVariantId && (
         <div className="fixed inset-0 z-50 grid place-items-end bg-black/40 p-0 sm:place-items-center sm:p-4">
-          <div className="w-full max-w-lg rounded-t-3xl bg-white p-5 dark:bg-slate-900 sm:rounded-3xl">
-            {editingVariant ? (
-              <>
-                <h3 className="text-lg font-extrabold">Edit product variant</h3>
-                <div className="mt-4 space-y-3">
-                  <label className="block text-sm">Size
-                    <select className={`${inputClass} mt-1`} value={editForm.size} onChange={(e) => setEditForm({ ...editForm, size: e.target.value })}>
-                      <option value="">Select size</option>
-                      {SIZE_ORDER.map((size) => <option key={size} value={size}>{size}</option>)}
-                    </select>
-                  </label>
-                  <label className="block text-sm">Price
-                    <input className={`${inputClass} mt-1`} type="number" step="0.01" value={editForm.price} onChange={(e) => setEditForm({ ...editForm, price: parseFloat(e.target.value) })} />
-                  </label>
-                  <label className="block text-sm">Quantity available
-                    <input className={`${inputClass} mt-1`} type="number" value={editForm.quantity_available} onChange={(e) => setEditForm({ ...editForm, quantity_available: parseFloat(e.target.value) })} />
-                  </label>
-                  <label className="block text-sm">Inches
-                    <input className={`${inputClass} mt-1`} type="number" step="0.01" value={editForm.inches} onChange={(e) => setEditForm({ ...editForm, inches: parseFloat(e.target.value) })} />
-                  </label>
-                  <label className="block text-sm">Replace image
-                    <input
-                      className="mt-1 block w-full text-sm"
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        if (file) openImageEditor(URL.createObjectURL(file), true);
-                        else {
-                          setEditSelectedFile(null);
-                          setEditPreviewUrl(null);
-                        }
-                      }}
-                    />
-                  </label>
-                  {editPreviewUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={editPreviewUrl} alt="Preview" className="mx-auto max-h-36 rounded-xl" />
-                  )}
-                </div>
-                <div className="mt-5 flex justify-end gap-2">
-                  <button type="button" className={btnSecondary} onClick={cancelEdit}>Cancel</button>
-                  <button type="button" className={btnPrimary} onClick={() => void handleUpdateVariant(editingVariant.sub_product_id)}>Save</button>
-                </div>
-              </>
-            ) : editingMasterProduct ? (
-              <>
-                <h3 className="text-lg font-extrabold">Edit master product</h3>
-                <div className="mt-4 space-y-3">
-                  <label className="block text-sm">Product name
-                    <input className={`${inputClass} mt-1`} type="text" value={editMasterForm.product_name} onChange={(e) => setEditMasterForm({ ...editMasterForm, product_name: e.target.value })} />
-                  </label>
-                  <label className="block text-sm">Category
-                    <select className={`${inputClass} mt-1`} value={editMasterForm.category_name} onChange={(e) => setEditMasterForm({ ...editMasterForm, category_name: e.target.value })}>
-                      <option value="">Select category</option>
-                      {categories.map((cat) => (
-                        <option key={cat.id} value={cat.category_name}>{cat.category_name}</option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div className="mt-5 flex justify-end gap-2">
-                  <button type="button" className={btnSecondary} onClick={cancelEdit}>Cancel</button>
-                  <button type="button" className={btnPrimary} onClick={() => void handleUpdateMasterProduct(editingMasterProduct.id)}>Save</button>
-                </div>
-              </>
-            ) : null}
+          <div className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-5 dark:bg-slate-900 sm:rounded-3xl">
+            <h3 className="text-lg font-extrabold">Edit variant</h3>
+            {selectedProduct && (
+              <p className="mt-2 inline-flex rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-800 dark:bg-brand-500/15 dark:text-brand-300">
+                {selectedProduct.product_name}
+              </p>
+            )}
+            <form onSubmit={handleUpdateVariant} className="mt-4 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm">
+                  Size
+                  <select
+                    className={`${inputClass} mt-1`}
+                    value={editForm.size}
+                    onChange={(e) => setEditForm({ ...editForm, size: e.target.value })}
+                  >
+                    <option value="">Select size</option>
+                    {SIZE_ORDER.map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  Inches
+                  <input
+                    className={`${inputClass} mt-1`}
+                    type="number"
+                    step="0.01"
+                    value={editForm.inches}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, inches: parseFloat(e.target.value) || 0 })
+                    }
+                  />
+                </label>
+                <label className="block text-sm">
+                  Price
+                  <input
+                    className={`${inputClass} mt-1`}
+                    type="number"
+                    step="0.01"
+                    value={editForm.price}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, price: parseFloat(e.target.value) || 0 })
+                    }
+                  />
+                </label>
+                <label className="block text-sm">
+                  Quantity available
+                  <input
+                    className={`${inputClass} mt-1`}
+                    type="number"
+                    value={editForm.quantity_available}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        quantity_available: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <label className="block text-sm">
+                Replace image
+                <input
+                  className="mt-1 block w-full text-sm"
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    if (file) openImageEditor(URL.createObjectURL(file), true);
+                    else {
+                      setEditSelectedFile(null);
+                      setEditPreviewUrl(null);
+                    }
+                  }}
+                />
+              </label>
+              {editPreviewUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={editPreviewUrl} alt="Preview" className="mx-auto max-h-36 rounded-xl" />
+              )}
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" className={btnSecondary} onClick={closeModal}>
+                  Cancel
+                </button>
+                <button type="submit" className={btnPrimary}>
+                  Save
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
